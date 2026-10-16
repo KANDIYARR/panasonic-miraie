@@ -21,7 +21,7 @@ Based on upstream commit `9f32c8e0da7818e0fce11067ac45fa3c32dc8681`.
 | Unload disconnected MQTT even if platform unload failed | Disconnect only after successful platform unload |
 | Frequent push updates deferred token maintenance | Add independent five-minute credential checks |
 | Failed polls reported success with stale state | Track device failure and raise coordinator failure on complete outage |
-| Unsupported minimum HA version and unbounded MQTT dependency | Set tested baseline to HA 2024.11.3 and pin Paho 2.1.0 |
+| Unsupported minimum HA version and incompatible dependency policy | Set tested baseline to HA 2024.11.3 and require Paho >=2.1.0, allowing HA to manage its shared version |
 
 ## Verification
 

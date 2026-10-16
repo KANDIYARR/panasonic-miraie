@@ -9,11 +9,11 @@
     "my"
   ],
   "documentation": "https://github.com/KANDIYARR/panasonic-miraie",
+  "integration_type": "hub",
   "iot_class": "cloud_push",
   "issue_tracker": "https://github.com/KANDIYARR/panasonic-miraie/issues",
   "requirements": [
-    "paho-mqtt==2.1.0"
+    "paho-mqtt>=2.1.0"
   ],
-  "version": "1.1.1",
-  "integration_type": "hub"
+  "version": "1.1.1"
 }

@@ -1,3 +1,4 @@
+# Modified by Vinoth Sakthivel, 2026. See NOTICE for attribution.
 """Privacy-preserving diagnostics for Panasonic MirAIe."""
 from __future__ import annotations
 

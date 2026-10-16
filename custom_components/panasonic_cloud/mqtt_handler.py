@@ -1,3 +1,4 @@
+# Modified by Vinoth Sakthivel, 2026. See NOTICE for attribution.
 """MQTT handler for Panasonic MirAIe real-time updates.
 
 Connects to Panasonic's production MQTT broker at mqtt.miraie.in:8883

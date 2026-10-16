@@ -1,3 +1,4 @@
+# Modified by Vinoth Sakthivel, 2026. See NOTICE for attribution.
 """Climate platform for Panasonic MirAIe AC."""
 from __future__ import annotations
 

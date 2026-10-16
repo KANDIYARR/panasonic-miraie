@@ -1,3 +1,4 @@
+# Modified by Vinoth Sakthivel, 2026. See NOTICE for attribution.
 """Config flow for Panasonic MirAIe integration."""
 from __future__ import annotations
 

@@ -1,3 +1,4 @@
+# Modified by Vinoth Sakthivel, 2026. See NOTICE for attribution.
 """Data update coordinator for Panasonic MirAIe.
 
 v1.1.0 changes:

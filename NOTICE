@@ -1,0 +1,14 @@
+Panasonic MirAIe
+
+Based on miraiehomeassistant/ha-panasonic-miraie.
+Copyright 2026 MirAIe Home Assistant.
+Upstream attribution: Panasonic Innovation Centre India and contributors.
+
+Modifications copyright 2026 Vinoth Sakthivel.
+Maintainer: Vinoth Sakthivel <vinoth@kandiyar.com>
+https://github.com/KANDIYARR/panasonic-miraie
+
+This fork includes reliability, testing, diagnostics, documentation and HACS
+packaging changes. It is independently maintained, not an official Panasonic release.
+The upstream abbreviated license is preserved in docs/UPSTREAM_LICENSE.txt;
+LICENSE contains the full text of the Apache License, Version 2.0 named upstream.

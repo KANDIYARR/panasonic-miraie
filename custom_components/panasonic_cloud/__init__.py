@@ -1,3 +1,4 @@
+# Modified by Vinoth Sakthivel, 2026. See NOTICE for attribution.
 """The Panasonic MirAIe integration."""
 from __future__ import annotations
 
@@ -12,6 +13,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers import (
     aiohttp_client,
+    config_validation as cv,
     config_entry_oauth2_flow,
 )
 
@@ -19,6 +21,8 @@ from .api import PanasonicMirAIeAPI
 from .config_flow import PanasonicMirAIeOAuth2Implementation
 from .const import DOMAIN
 from .coordinator import PanasonicMirAIeCoordinator
+
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
 
 _LOGGER = logging.getLogger(__name__)
 
