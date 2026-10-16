@@ -57,16 +57,9 @@ class PanasonicMirAIeAPI:
         """Get all homes and their devices."""
         try:
             async with self._session.get(
-                HOMES_URL, headers=self._headers()
+                HOMES_URL, headers=self._headers(), timeout=aiohttp.ClientTimeout(total=30)
             ) as resp:
                 self._check_auth_error(resp.status)
-
-                if resp.status == 502:
-                    _LOGGER.warning("Homes API 502 - server temporarily unavailable")
-                    return []
-                if resp.status == 404:
-                    _LOGGER.error("Homes API 404 - endpoint not found: %s", HOMES_URL)
-                    return []
 
                 resp.raise_for_status()
                 data = await resp.json()
@@ -75,9 +68,11 @@ class PanasonicMirAIeAPI:
                 if isinstance(data, dict):
                     if "message" in data:
                         _LOGGER.error("Homes API error: %s", data["message"])
-                        return []
+                        raise ValueError("Homes API returned an error")
                     return [data]
-                return data if isinstance(data, list) else [data]
+                if not isinstance(data, list) or not all(isinstance(home, dict) for home in data):
+                    raise ValueError("Invalid homes response")
+                return data
 
         except AuthenticationError:
             raise
@@ -180,7 +175,7 @@ class PanasonicMirAIeAPI:
         """Get the current status of a device (REST fallback)."""
         url = STATUS_URL(device_id)
         try:
-            async with self._session.get(url, headers=self._headers()) as resp:
+            async with self._session.get(url, headers=self._headers(), timeout=aiohttp.ClientTimeout(total=30)) as resp:
                 self._check_auth_error(resp.status, device_id)
 
                 if resp.status == 403:
@@ -189,18 +184,17 @@ class PanasonicMirAIeAPI:
                         device_id,
                     )
                     return {}
-                if resp.status in (404, 502):
-                    _LOGGER.debug("Status API %s for %s", resp.status, device_id)
-                    return {}
-
                 resp.raise_for_status()
-                return await resp.json()
+                data = await resp.json()
+                if not isinstance(data, dict):
+                    raise ValueError("Invalid device status response")
+                return data
 
         except AuthenticationError:
             raise
         except aiohttp.ClientError as err:
             _LOGGER.warning("Error fetching status for %s: %s", device_id, err)
-            return {}
+            raise
 
     async def async_set_device_state(
         self, device_id: str, payload: dict[str, Any]
@@ -229,7 +223,8 @@ class PanasonicMirAIeAPI:
 
         try:
             async with self._session.post(
-                url, headers=self._headers(), json=control_payload
+                url, headers=self._headers(), json=control_payload,
+                timeout=aiohttp.ClientTimeout(total=30)
             ) as resp:
                 self._check_auth_error(resp.status, device_id)
 

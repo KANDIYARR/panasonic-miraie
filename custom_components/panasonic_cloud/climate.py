@@ -110,7 +110,7 @@ class PanasonicClimate(CoordinatorEntity, ClimateEntity):
     def available(self) -> bool:
         """Return if entity is available."""
         status = self._status
-        if not status:
+        if not self.coordinator.last_update_success or not status:
             return False
         return str(status.get("onlineStatus", "true")).lower() == "true"
 

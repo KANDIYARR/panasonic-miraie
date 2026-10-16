@@ -15,6 +15,7 @@ import asyncio
 import json
 import logging
 import ssl
+from uuid import uuid4
 from collections.abc import Callable
 from typing import Any
 
@@ -76,8 +77,10 @@ class PanasonicMirAIeMQTT:
         Returns True on successful connection, False otherwise.
         Does NOT raise - coordinator can decide to continue with REST-only.
         """
-        client_id = f"ha-miraie-{self._home_id}"
+        client_id = f"ha-miraie-{uuid4().hex[:16]}"
+        self._stopping = False
         self._client = mqtt.Client(
+            callback_api_version=mqtt.CallbackAPIVersion.VERSION1,
             client_id=client_id,
             protocol=mqtt.MQTTv311,
             clean_session=True,
@@ -117,7 +120,7 @@ class PanasonicMirAIeMQTT:
             )
             await self._loop.run_in_executor(
                 None,
-                lambda: self._client.connect(
+                lambda: self._client.connect_async(
                     MQTT_BROKER, MQTT_PORT, MQTT_KEEPALIVE
                 ),
             )
@@ -141,7 +144,7 @@ class PanasonicMirAIeMQTT:
         if self._client is not None:
             try:
                 await self._loop.run_in_executor(None, self._client.disconnect)
-                self._client.loop_stop()
+                await self._loop.run_in_executor(None, self._client.loop_stop)
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("Error during MQTT disconnect: %s", err)
         self._connected = False
@@ -169,26 +172,13 @@ class PanasonicMirAIeMQTT:
         For each base topic, subscribes to both {topic}/status and
         {topic}/connectionStatus. Topics already subscribed are skipped.
         """
-        if self._client is None or not self._connected:
-            _LOGGER.debug("MQTT not connected - deferring subscribe")
-            return
-
-        new_count = 0
-        for base in topics:
-            for suffix in ("/status", "/connectionStatus"):
-                full = base + suffix
-                if full in self._subscriptions:
-                    continue
-                self._client.subscribe(full, qos=0)
-                self._subscriptions.add(full)
-                new_count += 1
-
-        if new_count:
-            _LOGGER.info(
-                "Subscribed to %d new MQTT topics (%d total)",
-                new_count,
-                len(self._subscriptions),
-            )
+        desired = {base.rstrip("/") + suffix for base in topics
+                   for suffix in ("/status", "/connectionStatus")}
+        new_topics = desired - self._subscriptions
+        self._subscriptions.update(desired)
+        if self._client is not None and self._connected:
+            for topic in new_topics:
+                self._client.subscribe(topic, qos=0)
 
     def publish_control(self, base_topic: str, payload: dict[str, Any]) -> bool:
         """Publish a control command to {base_topic}/control.
@@ -218,6 +208,8 @@ class PanasonicMirAIeMQTT:
 
     def _on_connect(self, client, userdata, flags, rc) -> None:
         """Handle successful or failed connection."""
+        if self._stopping:
+            return
         if rc == 0:
             self._connected = True
             self._consecutive_disconnects = 0
@@ -257,6 +249,8 @@ class PanasonicMirAIeMQTT:
     def _on_message(self, client, userdata, msg) -> None:
         """Handle incoming message - dispatch to HA event loop."""
         try:
+            if self._stopping:
+                return
             topic = msg.topic
             payload_bytes = msg.payload
             # Dispatch to HA loop
@@ -281,6 +275,8 @@ class PanasonicMirAIeMQTT:
                 _LOGGER.debug("Non-JSON MQTT payload on %s", topic)
                 return
 
+            if self._stopping or not isinstance(payload, dict):
+                return
             parts = topic.split("/")
             if len(parts) < 4:
                 return

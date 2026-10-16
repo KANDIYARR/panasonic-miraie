@@ -96,51 +96,24 @@ class PanasonicMirAIeOAuth2Implementation(
         )
 
         try:
-            resp = await session.post(
-                self.token_url, headers=headers, data=body_data
-            )
-            resp_text = await resp.text()
-
-            _LOGGER.debug(
-                "Token response status=%s body=%s",
-                resp.status,
-                resp_text[:300],
-            )
-
-            if resp.status >= 400:
-                _LOGGER.error(
-                    "Token request failed (%s): %s",
-                    resp.status,
-                    resp_text[:300],
-                )
+            async with session.post(
+                self.token_url, headers=headers, data=body_data,
+                timeout=aiohttp.ClientTimeout(total=30),
+            ) as resp:
                 resp.raise_for_status()
-
-            # Parse JSON manually (server may return wrong content-type)
-            try:
-                result = json.loads(resp_text)
-            except json.JSONDecodeError:
-                _LOGGER.error(
-                    "Token response is not valid JSON: %s", resp_text[:300]
-                )
-                raise aiohttp.ClientResponseError(
-                    request_info=resp.request_info,
-                    history=(),
-                    status=resp.status,
-                    message="Invalid JSON in token response",
-                )
-
-            if "error" in result:
-                _LOGGER.error(
-                    "Token error: %s - %s",
-                    result.get("error"),
-                    result.get("error_description", ""),
-                )
-                raise aiohttp.ClientResponseError(
-                    request_info=resp.request_info,
-                    history=(),
-                    status=400,
-                    message=result.get("error_description", result["error"]),
-                )
+                try:
+                    result = json.loads(await resp.text())
+                except (ValueError, TypeError) as err:
+                    raise ValueError("Invalid token response") from err
+                if not isinstance(result, dict):
+                    raise ValueError("Invalid token response")
+                if "error" in result:
+                    raise aiohttp.ClientResponseError(
+                        request_info=resp.request_info, history=(), status=400,
+                        message="OAuth token request rejected",
+                    )
+                if not result.get("access_token"):
+                    raise ValueError("Token response has no access token")
 
             # Fix scope field: HA expects string, Panasonic returns object
             if isinstance(result.get("scope"), dict):

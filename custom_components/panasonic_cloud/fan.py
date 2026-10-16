@@ -89,7 +89,7 @@ class PanasonicFan(CoordinatorEntity, FanEntity):
     def available(self) -> bool:
         """Return if entity is available."""
         status = self._status
-        if not status:
+        if not self.coordinator.last_update_success or not status:
             return False
         return str(status.get("onlineStatus", "true")).lower() == "true"
 
@@ -150,7 +150,7 @@ class PanasonicFan(CoordinatorEntity, FanEntity):
         speed = percentage_to_ordered_list_item(
             ORDERED_NAMED_FAN_SPEEDS, percentage
         )
-        await self._send({FAN_SPEED: int(speed)})
+        await self._send({FAN_POWER: "on", FAN_SPEED: int(speed)})
 
     async def async_set_preset_mode(self, preset_mode: str) -> None:
         """Set the fan preset mode."""

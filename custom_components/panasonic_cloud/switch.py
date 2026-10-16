@@ -100,7 +100,7 @@ class PanasonicSwitch(CoordinatorEntity, SwitchEntity):
     def available(self) -> bool:
         """Return if entity is available."""
         status = self._status
-        if not status:
+        if not self.coordinator.last_update_success or not status:
             return False
         return str(status.get("onlineStatus", "true")).lower() == "true"
 
@@ -130,7 +130,7 @@ class PanasonicSwitch(CoordinatorEntity, SwitchEntity):
 
     async def _send_channel(self, state: str) -> None:
         """Send a command for a specific channel."""
-        states = list(self._status.get(SWITCH_STATES, []))
+        states = [dict(channel) for channel in self._status.get(SWITCH_STATES, [])]
         found = False
         for ch in states:
             if ch.get(SWITCH_CHANNEL) == self._channel:

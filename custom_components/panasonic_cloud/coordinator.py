@@ -10,12 +10,17 @@ from __future__ import annotations
 
 from datetime import timedelta
 import logging
+import asyncio
+from copy import deepcopy
+
+import aiohttp
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import ConfigEntryAuthFailed, HomeAssistantError
 from homeassistant.helpers import config_entry_oauth2_flow
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.update_coordinator import (
     DataUpdateCoordinator,
     UpdateFailed,
@@ -57,16 +62,18 @@ class PanasonicMirAIeCoordinator(DataUpdateCoordinator):
         self.home_id: str | None = None
         self.topics: list[str] = []
         self.mqtt: PanasonicMirAIeMQTT | None = None
+        self._cancel_token_maintenance = None
 
     async def _async_ensure_fresh_token(self) -> None:
         """Ensure the token is valid; update API client and MQTT if refreshed."""
         try:
             await self.oauth_session.async_ensure_token_valid()
-        except Exception as err:
-            _LOGGER.error("Token refresh failed: %s", err)
-            raise ConfigEntryAuthFailed(
-                "Token refresh failed. Please re-authenticate."
-            ) from err
+        except aiohttp.ClientResponseError as err:
+            if err.status in (400, 401, 403):
+                raise ConfigEntryAuthFailed("Please re-authenticate") from err
+            raise UpdateFailed("Token service temporarily unavailable") from err
+        except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+            raise UpdateFailed("Cannot reach token service") from err
 
         token_data = self.entry.data.get("token", {})
         current_token = token_data.get("access_token", "")
@@ -125,17 +132,40 @@ class PanasonicMirAIeCoordinator(DataUpdateCoordinator):
             on_state_update=self._handle_mqtt_state,
             on_connection_update=self._handle_mqtt_connection,
         )
-        connected = await self.mqtt.async_connect()
+        self.mqtt.subscribe_topics(self.topics)
+        try:
+            connected = await self.mqtt.async_connect()
+        except Exception:
+            await self.mqtt.async_disconnect()
+            self.mqtt = None
+            _LOGGER.warning("MQTT setup unavailable; using REST polling")
+            return
         if connected:
-            self.mqtt.subscribe_topics(self.topics)
             _LOGGER.info("MQTT real-time updates active")
         else:
             _LOGGER.warning(
                 "MQTT connect failed - falling back to REST polling only"
             )
 
+    def async_start_token_maintenance(self) -> None:
+        """Renew credentials even while push updates defer REST polling."""
+        async def maintain_token(now) -> None:
+            try:
+                await self._async_ensure_fresh_token()
+            except ConfigEntryAuthFailed:
+                self.entry.async_start_reauth(self.hass)
+            except (UpdateFailed, ValueError):
+                _LOGGER.warning("Token renewal temporarily unavailable; will retry")
+
+        self._cancel_token_maintenance = async_track_time_interval(
+            self.hass, maintain_token, timedelta(minutes=5)
+        )
+
     async def async_shutdown_mqtt(self) -> None:
         """Stop the MQTT handler cleanly."""
+        if self._cancel_token_maintenance is not None:
+            self._cancel_token_maintenance()
+            self._cancel_token_maintenance = None
         if self.mqtt is not None:
             await self.mqtt.async_disconnect()
             self.mqtt = None
@@ -148,7 +178,7 @@ class PanasonicMirAIeCoordinator(DataUpdateCoordinator):
         if not device_id:
             return
 
-        existing = self.device_status.get(device_id, {})
+        existing = deepcopy(self.device_status.get(device_id, {}))
         existing.update(payload)
         self.device_status[device_id] = existing
 
@@ -159,7 +189,7 @@ class PanasonicMirAIeCoordinator(DataUpdateCoordinator):
         """Apply an MQTT connection-status update."""
         if not device_id:
             return
-        existing = self.device_status.get(device_id, {})
+        existing = deepcopy(self.device_status.get(device_id, {}))
         existing["onlineStatus"] = "true" if online else "false"
         self.device_status[device_id] = existing
         self.async_set_updated_data(self.device_status)
@@ -170,9 +200,8 @@ class PanasonicMirAIeCoordinator(DataUpdateCoordinator):
         With MQTT active, this runs every 15 minutes as a safety net.
         Without MQTT, it's the primary update path.
 
-        If a device call returns 401, we force a token refresh and retry
-        once - this catches the case where Panasonic invalidated the
-        token earlier than its declared expiry.
+        Rejected credentials trigger reauthentication. Transport failures
+        mark the affected device unavailable until a successful poll.
         """
         await self._async_ensure_fresh_token()
 
@@ -183,63 +212,46 @@ class PanasonicMirAIeCoordinator(DataUpdateCoordinator):
         if not all_devices:
             return self.device_status
 
-        retried = False
+        failures = 0
         for device in all_devices:
-            device_id = device.get("deviceId", "")
+            device_id = device.get("deviceId")
             if not device_id:
                 continue
             try:
                 status = await self.api.async_get_device_status(device_id)
                 if status:
-                    existing = self.device_status.get(device_id, {})
-                    existing.update(status)
-                    self.device_status[device_id] = existing
-            except AuthenticationError as err:
-                if not retried:
-                    _LOGGER.info(
-                        "Got 401 on %s - forcing token refresh and retrying",
-                        device_id,
+                    self.device_status.setdefault(device_id, {}).update(
+                        {"onlineStatus": "true", **status}
                     )
-                    retried = True
-                    try:
-                        await self._async_ensure_fresh_token()
-                        status = await self.api.async_get_device_status(
-                            device_id
-                        )
-                        if status:
-                            existing = self.device_status.get(device_id, {})
-                            existing.update(status)
-                            self.device_status[device_id] = existing
-                        continue
-                    except Exception:  # noqa: BLE001
-                        pass
-                raise ConfigEntryAuthFailed(
-                    "Authentication failed during update"
-                ) from err
-            except Exception as err:
-                _LOGGER.warning("Error updating %s: %s", device_id, err)
-
+            except AuthenticationError as err:
+                raise ConfigEntryAuthFailed("Please re-authenticate") from err
+            except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+                failures += 1
+                self.device_status.setdefault(device_id, {})["onlineStatus"] = "false"
+        if failures == len(all_devices):
+            raise UpdateFailed("Unable to fetch device states")
         return self.device_status
 
     async def async_send_control(
         self, device_id: str, base_topic: str | None, payload: dict[str, Any]
     ) -> bool:
-        """Send a control command.
-
-        Prefers MQTT (faster) with REST fallback. Always updates local
-        state optimistically so the UI feels instant.
-        """
-        # Optimistic local update
-        existing = self.device_status.get(device_id, {})
-        existing.update(payload)
+        """Send a command and update state only after transport acceptance."""
+        await self._async_ensure_fresh_token()
+        accepted = False
+        if self.mqtt is not None and self.mqtt.is_connected and base_topic:
+            accepted = self.mqtt.publish_control(base_topic, payload)
+        if not accepted:
+            try:
+                accepted = await self.api.async_set_device_state(device_id, payload)
+            except AuthenticationError as err:
+                self.entry.async_start_reauth(self.hass)
+                raise HomeAssistantError("Please re-authenticate Panasonic MirAIe") from err
+            except (aiohttp.ClientError, asyncio.TimeoutError) as err:
+                raise HomeAssistantError("Unable to send device command") from err
+        if not accepted:
+            raise HomeAssistantError("Panasonic MirAIe rejected the command")
+        existing = deepcopy(self.device_status.get(device_id, {}))
+        existing.update(deepcopy(payload))
         self.device_status[device_id] = existing
         self.async_set_updated_data(self.device_status)
-
-        # Try MQTT first
-        if self.mqtt is not None and self.mqtt.is_connected and base_topic:
-            if self.mqtt.publish_control(base_topic, payload):
-                return True
-            _LOGGER.debug("MQTT publish failed, falling back to REST")
-
-        # REST fallback
-        return await self.api.async_set_device_state(device_id, payload)
+        return True

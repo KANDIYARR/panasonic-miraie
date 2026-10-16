@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import logging
+import asyncio
+
+import aiohttp
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -12,7 +15,7 @@ from homeassistant.helpers import (
     config_entry_oauth2_flow,
 )
 
-from .api import PanasonicMirAIeAPI, AuthenticationError
+from .api import PanasonicMirAIeAPI
 from .config_flow import PanasonicMirAIeOAuth2Implementation
 from .const import DOMAIN
 from .coordinator import PanasonicMirAIeCoordinator
@@ -56,11 +59,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     try:
         await oauth_session.async_ensure_token_valid()
-    except Exception as err:
-        _LOGGER.error("Failed to validate/refresh token: %s", err)
-        raise ConfigEntryAuthFailed(
-            "Authentication failed. Please re-authenticate."
-        ) from err
+    except aiohttp.ClientResponseError as err:
+        if err.status in (400, 401, 403):
+            raise ConfigEntryAuthFailed("Please re-authenticate") from err
+        raise ConfigEntryNotReady("Token service unavailable") from err
+    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as err:
+        raise ConfigEntryNotReady("Unable to validate token") from err
 
     token_data = entry.data.get("token", {})
     access_token = token_data.get("access_token", "")
@@ -77,42 +81,29 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     try:
         await coordinator.async_discover_devices()
-    except AuthenticationError as err:
-        raise ConfigEntryAuthFailed(
-            "Authentication failed during device discovery"
-        ) from err
-    except ConfigEntryAuthFailed:
-        raise
-    except Exception as err:
-        raise ConfigEntryNotReady(
-            f"Error discovering devices: {err}"
-        ) from err
-
-    await coordinator.async_config_entry_first_refresh()
-
-    hass.data[DOMAIN][entry.entry_id] = {
-        "coordinator": coordinator,
-        "api": api,
-        "oauth_session": oauth_session,
-    }
-
-    await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+        await coordinator.async_config_entry_first_refresh()
+        hass.data[DOMAIN][entry.entry_id] = {
+            "coordinator": coordinator,
+            "api": api,
+            "oauth_session": oauth_session,
+        }
+        await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    except BaseException as err:
+        await coordinator.async_shutdown_mqtt()
+        hass.data[DOMAIN].pop(entry.entry_id, None)
+        if isinstance(err, (ConfigEntryAuthFailed, asyncio.CancelledError)):
+            raise
+        raise ConfigEntryNotReady("Unable to set up Panasonic MirAIe") from err
+    coordinator.async_start_token_maintenance()
 
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry - ensures MQTT is disconnected cleanly."""
-    data = hass.data[DOMAIN].get(entry.entry_id)
-    if data is not None:
-        coordinator: PanasonicMirAIeCoordinator = data.get("coordinator")
-        if coordinator is not None:
-            try:
-                await coordinator.async_shutdown_mqtt()
-            except Exception as err:  # noqa: BLE001
-                _LOGGER.debug("Error shutting down MQTT: %s", err)
-
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
-        hass.data[DOMAIN].pop(entry.entry_id, None)
+        data = hass.data[DOMAIN].pop(entry.entry_id, None)
+        if data is not None:
+            await data["coordinator"].async_shutdown_mqtt()
     return unload_ok

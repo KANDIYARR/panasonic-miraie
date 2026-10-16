@@ -1,0 +1,10 @@
+homeassistant==2024.11.3
+paho-mqtt==2.1.0
+pytest==8.3.5
+pytest-asyncio==0.25.3
+ruff==0.11.13
+# Bound transitive dependencies for the older compatibility baseline.
+josepy==1.14.0
+habluetooth==3.6.0
+bluetooth-data-tools==1.20.0
+pycares==4.4.0
