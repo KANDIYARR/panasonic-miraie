@@ -60,6 +60,7 @@ An independent fork of [ha-panasonic-miraie](https://github.com/miraiehomeassist
 ## Requirements
 
 - **Home Assistant 2024.11.3 or newer** — automated tests use this baseline; newer versions need deployment testing.
+- **Region:** Panasonic MirAIe India cloud (`miraie.in`).
 - A **Panasonic MirAIe account**, with devices already paired in the mobile app.
 - Internet access to Panasonic's HTTPS services and `mqtt.miraie.in:8883`.
 - **HACS** for the recommended installation method.
@@ -89,7 +90,7 @@ Use the button above, or add the repository manually:
 <details>
 <summary><strong>Manual installation</strong></summary>
 
-1. Download `panasonic-miraie-1.1.1.zip` from [Releases](https://github.com/KANDIYARR/panasonic-miraie/releases).
+1. Download `panasonic-miraie-1.1.2.zip` from [Releases](https://github.com/KANDIYARR/panasonic-miraie/releases).
 2. Copy the archive's `custom_components/panasonic_cloud` folder into your Home Assistant configuration:
 
    ```text

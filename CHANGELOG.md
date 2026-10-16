@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.2
+
+- Declare India as the supported region for HACS catalog eligibility.
+- Include the refreshed README and supplied MirAIe artwork in the release.
+- No device-control changes.
+
 ## 1.1.1
 
 Maintained by Vinoth Sakthivel (vinoth@kandiyar.com).
